@@ -19,52 +19,80 @@
 #' the opposition team name can be used here.
 #' @param all \code{TRUE} by default, returns info on all teams, ignoring the previous
 #' parameters. 
-#' @param type Defaults to "team". Other option is "player", which gets records for 
-#' individual players by countries selected.
+#' @param type Defaults to "team". Other options are "player", which gets records for 
+#' individual players by countries selected, or "matches", which returns match results
+#' for all individual games played.
 #' @export 
 get_team_records <- function(country = NULL, opposition = NULL,
-                             all = TRUE, type = c("team", "player")){
+                             all = TRUE, type = c("team", "player", "matches")){
   
-  url <- "http://stats.espnscrum.com/statsguru/rugby/stats/index.html?class=1;"
-  tp <- match.arg(type, choices = c("team", "player"))
+  
+  tp <- match.arg(type, choices = c("team", "player", "matches"))
+  
+  if(tp == "matches") {
+    url <- "http://www.espnscrum.com/statsguru/rugby/team/"
+  } else {
+    url <- "http://stats.espnscrum.com/statsguru/rugby/stats/index.html?class=1;"
+  }
   
   country_df <- tibble::tibble(
     country = c("england", "scotland", "ireland", "wales", "south africa",
-                "australia", "new zealand", "france", "argentina", "usa",
+                "australia", "new zealand", "france", "argentina", "united states",
                 "romania", "fiji", "samoa", "tonga", "italy", "japan",
                 "canada", "uruguay", "russia", "georgia", "pacific islanders",
-                "american samoa"),
+                "american samoa", "namibia"),
     number = c("1", "2", "3", "4", "5", "6", "8", "9", "10", "11", "12",
                "14", "15", "16", "20", "23", "25", "29", "57", "81",
-               "121", "551")
-    )
+               "121", "551", "82")
+  )
   
   get_data <- function(URL) {
-    tabl <- xml2::read_html(URL) %>% 
-      rvest::html_node("#scrumArticlesBoxContent > table:nth-child(2)") %>% 
-      rvest::html_table()
+    
+    tabl <- xml2::read_html(URL)
+    
+    if(tp == "matches") {
+      tabl <- rvest::html_node(tabl, "#scrumArticlesBoxContent > table:nth-child(4)") %>% 
+        rvest::html_table() %>%
+        setNames(make.names(names(.), unique = TRUE)) %>% 
+        dplyr::rename(result = Result, 
+                      `for` = For, 
+                      against = Aga,
+                      difference = Diff, 
+                      for_ht = HTf,
+                      against_ht = HTa,
+                      opposition = Opposition,
+                      ground = Ground,
+                      date = Match.Date) %>% 
+        dplyr::select(-c(7, 11))
+    } else {
+      tabl <- rvest::html_node(tabl, "#scrumArticlesBoxContent > table:nth-child(2)") %>% 
+        rvest::html_table()
+    }
     
     if(tp == "team") {
       tabl <- tabl %>% 
         dplyr::rename(matches = Mat, percent_won = `%`, against = Aga,
-                    difference = Diff, conversions = Conv, penalties = Pens,
-                    dropgoals = Drop) %>% 
+                      difference = Diff, conversions = Conv, penalties = Pens,
+                      dropgoals = Drop) %>% 
         dplyr::select(-c(15,16))
       
-    } else {
+    } else if(tp == "player") {
       tabl <- tabl %>% 
         dplyr::rename(matches = Mat, points = Pts, percent_won = `%`,
-                    conversions = Conv, penalties = Pens,
-                    dropgoals = Drop) %>%
+                      conversions = Conv, penalties = Pens,
+                      dropgoals = Drop) %>%
         dplyr::select(-16)
     }
     
-    tabl <- tabl %>%
-      tidyr::separate(Span, into = c("start_year", "end_year"), sep = "-") %>% 
-      dplyr::mutate_at(2:3, as.numeric)
+    if(tp != "matches") {
+      tabl <- tabl %>%
+        tidyr::separate(Span, into = c("start_year", "end_year"), sep = "-") %>% 
+        dplyr::mutate_at(2:3, as.numeric)
+      
+      colnames(tabl) <- stringr::str_to_lower(colnames(tabl))
+      tabl <- tibble::as_tibble(tabl)
+    }
     
-    colnames(tabl) <- stringr::str_to_lower(colnames(tabl))
-    tabl <- tibble::as_tibble(tabl)
     
     return(tabl)
   }
@@ -87,7 +115,12 @@ get_team_records <- function(country = NULL, opposition = NULL,
         
         team <- dplyr::filter(country_df, country == ct) %>% 
           dplyr::pull(number)
-        req <- paste0(url, glue::glue("team={team};template=results;type={tp}"))
+        
+        if(tp == "matches") {
+          req <- paste0(url, glue::glue("{team}.html?class=1;template=results;type=team;view=results"))
+        } else {
+          req <- paste0(url, glue::glue("team={team};template=results;type={tp}"))
+        }
         
         df <- get_data(req)
         
